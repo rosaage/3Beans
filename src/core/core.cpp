@@ -120,7 +120,7 @@ void Core::loadFirm(const std::string &path) {
         uint64_t end = uint64_t(address) + length;
         bool ram = (address >= 0x08000000 && end <= (n3dsMode ? 0x08180000U : 0x08100000U)) ||
             (address >= 0x18000000 && end <= 0x18600000) ||
-            (address >= 0x1FF80000 && end <= 0x20000000) ||
+            (address >= 0x1FF00000 && end <= 0x20000000) ||
             (address >= 0x20000000 && end <= (n3dsMode ? 0x30000000U : 0x28000000U));
         if (((offset | address | length) & 3) || offset < 0x200 ||
                 uint64_t(offset) + length > firmData.size() || !ram) throw ERROR_FIRM;
@@ -139,6 +139,20 @@ void Core::scheduleFirmBoot() {
 }
 
 void Core::bootFirm() {
+    // Older FIRMs can place ARM11 code in the configurable DSP WRAM banks.
+    // Map these banks before copying any sections, as their reset state is unmapped.
+    bool wram = false;
+    for (int i = 0; i < 4; i++) {
+        uint32_t *section = (uint32_t*)&firmData[0x40 + i * 0x30];
+        wram |= section[2] && section[1] < 0x1FF80000 &&
+            uint64_t(section[1]) + section[2] > 0x1FF00000;
+    }
+    if (wram) {
+        for (int i = 0; i < 8; i++) {
+            memory.write<uint8_t>(ARM9, 0x10140000 + i, 0x81 | (i << 2));
+            memory.write<uint8_t>(ARM9, 0x10140008 + i, 0x81 | (i << 2));
+        }
+    }
     for (int i = 0; i < 4; i++) {
         uint32_t *section = (uint32_t*)&firmData[0x40 + i * 0x30];
         for (uint32_t offset = 0; offset < section[2]; offset += 4)
