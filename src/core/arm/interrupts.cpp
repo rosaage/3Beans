@@ -68,6 +68,9 @@ void Interrupts::interrupt(CpuId id) {
 void Interrupts::halt(CpuId id, uint8_t type) {
     // Halt a CPU and check if all ARM11 cores have been halted
     core.arms[id].halt(BIT(type));
+    // An enabled interrupt may already be pending when WFI/WFE executes.
+    // Recheck its level so a previously delivered wakeup cannot be lost.
+    checkInterrupt(id);
     if (id != ARM9 && core.arms[ARM11A].halted && core.arms[ARM11B].halted &&
             core.arms[ARM11C].halted && core.arms[ARM11D].halted) {
         // Check if the current clock/FCRAM mode changed
