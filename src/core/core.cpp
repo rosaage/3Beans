@@ -18,9 +18,10 @@
 */
 
 #include <algorithm>
+#include <cstring>
 #include "core.h"
 
-Core::Core(std::string &cartPath, std::function<void()> *contextFunc): aes(*this), arms { ArmInterp(*this, ARM11A),
+Core::Core(std::string &cartPath, std::function<void()> *contextFunc, const std::string &firmPath): aes(*this), arms { ArmInterp(*this, ARM11A),
         ArmInterp(*this, ARM11B), ArmInterp(*this, ARM11C), ArmInterp(*this, ARM11D), ArmInterp(*this, ARM9) },
         cartridge(*this, cartPath), cdmas { Cdma(*this, CDMA0), Cdma(*this, CDMA1), Cdma(*this, XDMA) }, cp15(*this),
         csnd(*this), gpu(*this, contextFunc), i2c(*this), input(*this), interrupts(*this), memory(*this),
@@ -34,6 +35,7 @@ Core::Core(std::string &cartPath, std::function<void()> *contextFunc): aes(*this
 
     // Run any other post-construction initializers
     if (!memory.init()) throw ERROR_BOOTROM;
+    if (!firmPath.empty()) loadFirm(firmPath);
     for (int i = 0; i < MAX_CPUS; i++)
         arms[i].init();
     initDsp();
@@ -81,6 +83,7 @@ Core::Core(std::string &cartPath, std::function<void()> *contextFunc): aes(*this
     tasks[WIFI_WRITE_BLOCK] = std::bind(&Wifi::writeBlock, &wifi);
     tasks[NTR_WORD_READY] = std::bind(&Cartridge::ntrWordReady, &cartridge);
     tasks[CTR_WORD_READY] = std::bind(&Cartridge::ctrWordReady, &cartridge);
+    tasks[BOOT_FIRM] = std::bind(&Core::bootFirm, this);
 
     // Schedule the initial tasks
     schedule(RESET_CYCLES, 0x7FFFFFFFFFFFFFFF);
@@ -91,6 +94,63 @@ Core::Core(std::string &cartPath, std::function<void()> *contextFunc): aes(*this
 Core::~Core() {
     // Clean up the DSP
     delete dsp;
+}
+
+void Core::loadFirm(const std::string &path) {
+    FILE *file = fopen(path.c_str(), "rb");
+    if (!file) throw ERROR_FIRM;
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    if (size < 0x200 || size > 0x4000000) {
+        fclose(file);
+        throw ERROR_FIRM;
+    }
+    firmData.resize(size);
+    rewind(file);
+    bool loaded = (fread(firmData.data(), 1, size, file) == size);
+    fclose(file);
+    if (!loaded || memcmp(firmData.data(), "FIRM", 4)) throw ERROR_FIRM;
+
+    // Validate every section before any guest memory is changed
+    bool entry9 = false, entry11 = false;
+    for (int i = 0; i < 4; i++) {
+        uint32_t *section = (uint32_t*)&firmData[0x40 + i * 0x30];
+        uint32_t offset = section[0], address = section[1], length = section[2];
+        if (!length) continue;
+        uint64_t end = uint64_t(address) + length;
+        bool ram = (address >= 0x08000000 && end <= (n3dsMode ? 0x08180000U : 0x08100000U)) ||
+            (address >= 0x18000000 && end <= 0x18600000) ||
+            (address >= 0x1FF80000 && end <= 0x20000000) ||
+            (address >= 0x20000000 && end <= (n3dsMode ? 0x30000000U : 0x28000000U));
+        if (((offset | address | length) & 3) || offset < 0x200 ||
+                uint64_t(offset) + length > firmData.size() || !ram) throw ERROR_FIRM;
+        uint32_t pc9 = U8TO32(firmData, 0xC) & ~1U, pc11 = U8TO32(firmData, 0x8) & ~1U;
+        entry9 |= (pc9 >= address && pc9 < end);
+        entry11 |= (pc11 >= address && pc11 < end);
+    }
+    if (!entry9 || !entry11) throw ERROR_FIRM;
+}
+
+void Core::scheduleFirmBoot() {
+    // Replace the NAND FIRM at the BootROM handoff, after hardware/key initialization
+    if (firmData.empty() || firmScheduled) return;
+    firmScheduled = true;
+    schedule(BOOT_FIRM, 0);
+}
+
+void Core::bootFirm() {
+    for (int i = 0; i < 4; i++) {
+        uint32_t *section = (uint32_t*)&firmData[0x40 + i * 0x30];
+        for (uint32_t offset = 0; offset < section[2]; offset += 4)
+            memory.write<uint32_t>(ARM9, section[1] + offset, U8TO32(firmData, section[0] + offset));
+    }
+    // Protect both boot ROMs before handing off to the chosen payload
+    memory.write<uint8_t>(ARM9, 0x10000000, 3);
+    memory.write<uint8_t>(ARM9, 0x10000001, 1);
+    for (int i = ARM11B; i <= ARM11D; i++) arms[i].halt(BIT(0));
+    arms[ARM11A].bootFirm(U8TO32(firmData, 0x8));
+    arms[ARM9].bootFirm(U8TO32(firmData, 0xC));
+    firmData.clear();
 }
 
 void Core::initDsp() {
@@ -149,6 +209,12 @@ void Core::resetCycles() {
 void Core::endFrame() {
     // Break execution at the end of a frame and count it
     running.store(false);
+    // BootROM publishes its WiFi-flash error only after all boot sources fail.
+    // Direct FIRM boot can still proceed with initialized hardware and no bootable NAND.
+    if (!firmData.empty() && !firmScheduled) {
+        uint8_t wifiError = memory.read<uint32_t>(ARM9, 0x1FFFE00C) >> 16;
+        if (wifiError && wifiError != 0xFF) scheduleFirmBoot();
+    }
     fpsCount++;
 
     // Update the FPS counter and save files every second

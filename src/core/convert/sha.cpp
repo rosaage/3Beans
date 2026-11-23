@@ -191,7 +191,8 @@ void Sha::update() {
     }
 
     // Set or clear SHA in DRQs based on CPU type
-    if ((shaCnt & BIT(2)) && inFifo.empty() && outFifo.empty()) {
+    // NTRBoot feeds AES output in 8-word bursts; allow the second half of a hash block
+    if ((shaCnt & BIT(2)) && inFifo.size() <= 8 && outFifo.size() <= 8) {
         if (arm9) {
             core.ndma.setDrq(0xA);
             core.cdmas[XDMA].setDrq(0x6);

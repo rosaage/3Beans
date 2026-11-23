@@ -18,6 +18,7 @@
 */
 
 #include <cstring>
+#include <cctype>
 #include "../core.h"
 
 const uint16_t Cartridge::ctrClocks[] = { 64, 80, 96, 128, 160, 256, 256, 256 };
@@ -25,12 +26,27 @@ const uint16_t Cartridge::ctrClocks[] = { 64, 80, 96, 128, 160, 256, 256, 256 };
 Cartridge::Cartridge(Core &core, std::string &cartPath): core(core) {
     // Open a cartridge file if a path was provided
     if (cartPath.empty() || !(cartFile = fopen(cartPath.c_str(), "rb"))) return;
-    if (Settings::cartAutoBoot) core.aes.autoBoot();
     cfg9CardPower &= ~BIT(0); // Inserted
 
-    // Determine a primary 3DS cartridge ID based on ROM size, from 128MB to 4GB
+    // Determine the image size and cartridge type
     fseek(cartFile, 0, SEEK_END);
     cartSize = ftell(cartFile);
+    std::string extension = cartPath.substr(cartPath.find_last_of('.') + 1);
+    for (char &c : extension) c = std::tolower(static_cast<unsigned char>(c));
+    if (extension == "srl") {
+        // SRL images are NTR cartridges; don't interpret their headers as CARD1/CARD2
+        ntrCart = true;
+        cartId1 = 0x00001FC2;
+        cartId2 = 0;
+        // SRL security data contains the cartridge's expanded KEY1 tables.
+        // NTRBoot uses its own retail/dev tables, without game-code derivation.
+        for (int i = 0; i < 0x12; i++) ntrKey[i] = readCart(0x1600 + i * 4);
+        for (int i = 0; i < 0x400; i++) ntrKey[0x12 + i] = readCart(0x1C00 + i * 4);
+        return;
+    }
+    if (Settings::cartAutoBoot) core.aes.autoBoot();
+
+    // Determine a primary 3DS cartridge ID based on ROM size, from 128MB to 4GB
     const uint8_t ids[] = { 0x7F, 0xFF, 0xFE, 0xFA, 0xF8, 0xF0 };
     uint8_t idx = 0;
     while ((0x8000000 << idx) < cartSize && idx < 5) idx++;
@@ -108,6 +124,7 @@ uint32_t Cartridge::readCart(uint32_t address) {
     // Read a value from cartridge ROM, loading new blocks from file as necessary
     if (((address ^ cartBase) >> 11) != 0) {
         cartBase = (address & ~0x7FF);
+        memset(cartBlock, 0xFF, sizeof(cartBlock));
         fseek(cartFile, cartBase, SEEK_SET);
         fread(cartBlock, sizeof(uint32_t), 0x200, cartFile);
     }
@@ -280,6 +297,17 @@ uint32_t Cartridge::readNtrData() {
 
     // Return a value based on the current NTRCARD reply state
     switch (ntrReply) {
+    case REPLY_ROM:
+    case REPLY_HEADER: {
+        // NTR reads wrap within a 4KB page, including unaligned reads
+        uint32_t next = (ntrAddress & ~0xFFF) | ((ntrAddress + 4) & 0xFFF);
+        uint32_t data = readCart(ntrAddress);
+        if (int shift = (ntrAddress & 0x3) * 8)
+            data = (data >> shift) | (readCart(next) << (32 - shift));
+        ntrAddress = next;
+        return data;
+    }
+
     case REPLY_CHIP1:
         // Reply with the primary 3DS cartridge chip ID
         return cartId1;
@@ -327,7 +355,86 @@ void Cartridge::writeCfg9CardPower(uint16_t mask, uint16_t value) {
 
     // Change to off state automatically if requested
     if ((cfg9CardPower & 0xC) == 0xC)
-        cfg9CardPower &= ~0xC;
+        cfg9CardPower &= ~0xC, ntrMode = 0, ntrSecureCmd = -1, ctrMode = false;
+}
+
+uint64_t Cartridge::decryptNtrCmd(uint64_t command) {
+    // KEY1 Blowfish, with the command's most significant word as the left half
+    uint32_t x = command >> 32, y = command;
+    for (int i = 0x11; i >= 2; i--) {
+        uint32_t z = x ^ ntrKey[i];
+        x = ntrKey[0x12 + (z >> 24)] + ntrKey[0x112 + ((z >> 16) & 0xFF)];
+        x = (x ^ ntrKey[0x212 + ((z >> 8) & 0xFF)]) + ntrKey[0x312 + (z & 0xFF)];
+        x ^= y;
+        y = z;
+    }
+    return (uint64_t(y ^ ntrKey[0]) << 32) | (x ^ ntrKey[1]);
+}
+
+void Cartridge::processNtrCmd(uint64_t command) {
+    if (ntrMode == 1) {
+        uint64_t cmd = decryptNtrCmd(command);
+        LOG_INFO("NTR KEY1 command 0x%016llX, size 0x%X\n", (unsigned long long)cmd, ntrCount);
+        switch (cmd >> 60) {
+        case 0x1: // Secure chip ID
+            ntrReply = REPLY_CHIP1;
+            break;
+
+        case 0x2: // Secure 4KB segment; repeated 512-byte transfers continue the segment
+            if (cmd != ntrSecureCmd) ntrAddress = ((cmd >> 44) & 0xFFFF) << 12;
+            ntrReply = REPLY_ROM;
+            break;
+
+        case 0x4: // Enable KEY2 (the emulated controller delivers descrambled data)
+        case 0x6: // Secure dummy command
+            break;
+
+        case 0xA: // Leave KEY1 mode for normal data commands
+            ntrMode = 2;
+            break;
+
+        default:
+            LOG_CRIT("Unknown NTR KEY1 command: 0x%016llX\n", (unsigned long long)cmd);
+            break;
+        }
+        ntrSecureCmd = cmd;
+        return;
+    }
+
+    LOG_INFO("NTR command 0x%016llX, mode %d, size 0x%X\n", (unsigned long long)command, ntrMode, ntrCount);
+    switch (command >> 56) {
+    case 0x00: // Initial header, repeated within the first 4KB
+        if (ntrMode != 0) break;
+        ntrAddress = (command >> 24) & 0xFFF;
+        ntrReply = REPLY_HEADER;
+        break;
+
+    case 0x90: // Initial chip ID
+        if (ntrMode == 0) ntrReply = REPLY_CHIP1;
+        break;
+
+    case 0x3C: // Activate KEY1 command encryption
+        if (ntrMode == 0) ntrMode = 1, ntrSecureCmd = -1;
+        break;
+
+    case 0xB7: // Data read
+        if (ntrMode != 2) break;
+        ntrAddress = (command >> 24) & 0xFFFFFFFF;
+        if (ntrAddress < 0x8000) ntrAddress = 0x8000 | (ntrAddress & 0x1FF);
+        ntrReply = REPLY_ROM;
+        break;
+
+    case 0xB8: // Data-mode chip ID
+        if (ntrMode == 2) ntrReply = REPLY_CHIP1;
+        break;
+
+    case 0x9F: // Load/reset command, returns high bytes
+        break;
+
+    default:
+        LOG_CRIT("Unknown NTR command: 0x%016llX\n", (unsigned long long)command);
+        break;
+    }
 }
 
 void Cartridge::writeNtrMcnt(uint16_t mask, uint16_t value) {
@@ -355,7 +462,10 @@ void Cartridge::writeNtrRomcnt(uint32_t mask, uint32_t value) {
     ntrReply = REPLY_NONE;
 
     // Interpret the NTRCARD command
-    if (cartFile && !ctrMode) {
+    if (cartFile && ntrCart) {
+        processNtrCmd(cmd);
+    }
+    else if (cartFile && !ctrMode) {
         switch (cmd >> 56) {
         case 0x90: // Chip ID 1
             // Switch to primary chip ID reply state

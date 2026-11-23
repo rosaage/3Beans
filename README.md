@@ -25,6 +25,13 @@ the File menu. If you want to skip the home menu and load directly into a game, 
 Note that 3Beans requires encrypted cartridge dumps, unlike high-level emulators which typically expect decrypted ones.
 GodMode9 can dump both encrypted and decrypted ROMs, so make sure you get the right one.
 
+For NTRBoot, insert an `.srl` image containing its cartridge security tables, then select **System > Start with NTRBoot**.
+Selecting an `.srl` leaves emulation stopped. The boot action holds Start, Select, X, and the sleep sensor for five emulated
+seconds. Match the hardware unit type to the retail or development image.
+
+To run homebrew such as GodMode9 directly, select **File > Boot FIRM...** and choose a decrypted `.firm` file. BootROM
+initialization runs before the selected payload, with the configured NAND and SD images available to it.
+
 ### Contributing
 This is a personal project, and I've decided to not review or accept pull requests for it. If you want to help, you can
 test things and report issues or provide feedback. If you can afford it, you can also donate to motivate me and allow me

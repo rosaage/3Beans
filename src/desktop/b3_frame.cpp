@@ -17,6 +17,7 @@
     along with 3Beans. If not, see <https://www.gnu.org/licenses/>.
 */
 
+#include <wx/filename.h>
 #include "b3_frame.h"
 #include "b3_canvas_ogl.h"
 #include "b3_canvas_soft.h"
@@ -31,6 +32,7 @@ enum FrameEvent {
     QUIT,
     PAUSE,
     RESTART,
+    START_NTRBOOT,
     STOP,
     SET_HARDWARE,
     FPS_LIMITER,
@@ -40,15 +42,18 @@ enum FrameEvent {
     GPU_SETTINGS,
     PATH_SETTINGS,
     INPUT_BINDINGS,
-    UPDATE_JOYSTICK
+    UPDATE_JOYSTICK,
+    BOOT_FIRM_FILE
 };
 
 wxBEGIN_EVENT_TABLE(b3Frame, wxFrame)
 EVT_MENU(INSERT_CART, b3Frame::insertCart)
+EVT_MENU(BOOT_FIRM_FILE, b3Frame::bootFirm)
 EVT_MENU(EJECT_CART, b3Frame::ejectCart)
 EVT_MENU(QUIT, b3Frame::quit)
 EVT_MENU(PAUSE, b3Frame::pause)
 EVT_MENU(RESTART, b3Frame::restart)
+EVT_MENU(START_NTRBOOT, b3Frame::startNtrBoot)
 EVT_MENU(STOP, b3Frame::stop)
 EVT_MENU(SET_HARDWARE, b3Frame::setHardware)
 EVT_MENU(FPS_LIMITER, b3Frame::fpsLimiter)
@@ -67,6 +72,7 @@ b3Frame::b3Frame(): wxFrame(nullptr, wxID_ANY, "3Beans") {
     fileMenu = new wxMenu();
     fileMenu->Append(INSERT_CART, "&Insert Cart ROM");
     fileMenu->Append(EJECT_CART, "&Eject Cart ROM");
+    fileMenu->Append(BOOT_FIRM_FILE, "&Boot FIRM...");
     fileMenu->AppendSeparator();
     fileMenu->Append(QUIT, "&Quit");
     fileMenu->Enable(EJECT_CART, false);
@@ -75,6 +81,7 @@ b3Frame::b3Frame(): wxFrame(nullptr, wxID_ANY, "3Beans") {
     systemMenu = new wxMenu();
     systemMenu->Append(PAUSE, "&Pause");
     systemMenu->Append(RESTART, "&Restart");
+    systemMenu->Append(START_NTRBOOT, "Start with &NTRBoot");
     systemMenu->Append(STOP, "&Stop");
     systemMenu->AppendSeparator();
     systemMenu->Append(SET_HARDWARE, "&Set Hardware");
@@ -167,18 +174,24 @@ void b3Frame::runCore() {
         core->runFrame();
 }
 
-void b3Frame::startCore(bool full) {
+void b3Frame::startCore(bool full, bool ntrBoot) {
     // Fully stop and restart the core, or handle errors
     if (full) {
         stopCore(true);
         try {
             mutex.lock();
-            core = new Core(cartPath, glSupport ? &((b3CanvasOgl*)canvas)->contextFunc : nullptr);
+            core = new Core(cartPath, glSupport ? &((b3CanvasOgl*)canvas)->contextFunc : nullptr, firmPath);
+            if (ntrBoot) core->input.startNtrBoot();
             mutex.unlock();
         }
         catch (CoreError e) {
             core = nullptr;
             mutex.unlock();
+            if (e == ERROR_FIRM) {
+                wxMessageDialog(this, "Select a decrypted FIRM file with valid sections and ARM9/ARM11 entrypoints.",
+                    "Invalid FIRM", wxICON_NONE).ShowModal();
+                return;
+            }
             wxMessageDialog(this, "One of the boot ROMs is missing! Check the path settings to configure them. "
                 "You probably also want a NAND dump from GodMode9 and a FAT-formatted SD image file.",
                 "Boot ROMs Missing", wxICON_NONE).ShowModal();
@@ -326,13 +339,25 @@ void b3Frame::releaseScreen() {
 void b3Frame::insertCart(wxCommandEvent &event) {
     // Open a file browser for cartridge ROMs
     wxFileDialog romSelect(this, "Select Cart ROM", "", "",
-        "3DS Cart ROMs (*.3ds, *.cci)|*.3ds;*.cci", wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+        "Cart ROMs (*.3ds, *.cci, *.srl)|*.3ds;*.cci;*.srl", wxFD_OPEN | wxFD_FILE_MUST_EXIST);
     if (romSelect.ShowModal() == wxID_CANCEL) return;
 
-    // Set the cartridge path and start or restart the core
+    // Leave NTRBoot images inserted and stopped until a boot mode is selected
     cartPath = (const char*)romSelect.GetPath().mb_str(wxConvUTF8);
-    startCore(true);
+    firmPath.clear();
+    if (wxFileName(romSelect.GetPath()).GetExt().CmpNoCase("srl") == 0)
+        stopCore(true);
+    else
+        startCore(true);
     fileMenu->Enable(EJECT_CART, true);
+}
+
+void b3Frame::bootFirm(wxCommandEvent &event) {
+    wxFileDialog firmSelect(this, "Select FIRM to Boot", "", "",
+        "FIRM Files (*.firm)|*.firm", wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+    if (firmSelect.ShowModal() == wxID_CANCEL) return;
+    firmPath = (const char*)firmSelect.GetPath().mb_str(wxConvUTF8);
+    startCore(true);
 }
 
 void b3Frame::ejectCart(wxCommandEvent &event) {
@@ -355,6 +380,12 @@ void b3Frame::pause(wxCommandEvent &event) {
 void b3Frame::restart(wxCommandEvent &event) {
     // Restart the core
     startCore(true);
+}
+
+void b3Frame::startNtrBoot(wxCommandEvent &event) {
+    // Cold boot with the NTRBoot buttons and sleep sensor held from the first instruction
+    firmPath.clear();
+    startCore(true, true);
 }
 
 void b3Frame::stop(wxCommandEvent &event) {

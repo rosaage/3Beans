@@ -246,6 +246,7 @@ void Memory::writeCfg9Sysprot9(uint8_t value) {
     cfg9Sysprot9 |= (value & 0x3);
     if (value & BIT(0)) memset(&boot9[0x8000], 0, 0x8000);
     if (value & BIT(1)) memset(otpEncrypted, 0, sizeof(otpEncrypted));
+    if (value & BIT(0)) core.scheduleFirmBoot();
 }
 
 void Memory::writeCfg9Sysprot11(uint8_t value) {

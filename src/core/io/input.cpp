@@ -19,6 +19,22 @@
 
 #include "../core.h"
 
+void Input::startNtrBoot() {
+    // The scheduler runs at 268111856 Hz, regardless of host speed or pauses
+    ntrBootEnd = core.globalCycles + 1ULL * 268111856;
+}
+
+bool Input::isSleepClosed() {
+    // Drop the synthetic hold after five emulated seconds
+    if (ntrBootEnd && core.globalCycles >= ntrBootEnd) ntrBootEnd = 0;
+    return ntrBootEnd != 0;
+}
+
+uint16_t Input::readHidPad() {
+    // Overlay Start, Select and X so host input cannot release the boot combination
+    return hidPad & ~(isSleepClosed() ? (BIT(3) | BIT(2) | BIT(10)) : 0);
+}
+
 void Input::pressKey(int key) {
     // Clear key bits to indicate presses
     if (key < 12)

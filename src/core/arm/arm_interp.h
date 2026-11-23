@@ -32,6 +32,7 @@ public:
 
     ArmInterp(Core &core, CpuId id);
     void init();
+    void bootFirm(uint32_t entry);
 
     void resetCycles();
     static void stopCycles(Core *core);

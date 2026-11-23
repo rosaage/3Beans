@@ -251,6 +251,7 @@ template <typename T> T Memory::ioRead(CpuId id, uint32_t address) {
             DEF_IO08(0x10144001, data = core.i2c.readBusCnt(1)) // I2C_BUS1_CNT
             DEF_IO32(0x10145000, data = core.csnd.readSndexcnt()) // CODEC_SNDEXCNT
             DEF_IO16(0x10146000, data = core.input.readHidPad()) // HID_PAD
+            DEF_IO08(0x10147000, data = core.input.isSleepClosed() ? BIT(4) : 0) // GPIO1_DATA (sleep sensor)
             DEF_IO08(0x10148000, data = core.i2c.readBusData(2)) // I2C_BUS2_DATA
             DEF_IO08(0x10148001, data = core.i2c.readBusCnt(2)) // I2C_BUS2_CNT
             DEF_IO08(0x10161000, data = core.i2c.readBusData(0)) // I2C_BUS0_DATA

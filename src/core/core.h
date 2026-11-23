@@ -52,7 +52,8 @@
 #include "memory/ndma.h"
 
 enum CoreError {
-    ERROR_BOOTROM
+    ERROR_BOOTROM,
+    ERROR_FIRM
 };
 
 enum Task {
@@ -109,6 +110,7 @@ enum Task {
     WIFI_WRITE_BLOCK,
     NTR_WORD_READY,
     CTR_WORD_READY,
+    BOOT_FIRM,
     MAX_TASKS
 };
 
@@ -152,17 +154,20 @@ public:
     std::vector<Event> events;
     uint64_t globalCycles = 0;
 
-    Core(std::string &cartPath, std::function<void()> *contextFunc = nullptr);
+    Core(std::string &cartPath, std::function<void()> *contextFunc = nullptr, const std::string &firmPath = "");
     ~Core();
 
     void runFrame() { (*runFunc)(*this); }
     void schedule(Task task, uint64_t cycles);
     void initDsp();
+    void scheduleFirmBoot();
 
 private:
     std::function<void()> tasks[MAX_TASKS];
     void (*runFunc)(Core&) = &ArmInterp::runFrame<false, false>;
     int dspCurrent = 0;
+    std::vector<uint8_t> firmData;
+    bool firmScheduled = false;
 
     std::chrono::steady_clock::time_point lastFpsTime;
     int fpsCount = 0;
@@ -170,4 +175,6 @@ private:
     void resetCycles();
     void endFrame();
     void updateRunFunc();
+    void loadFirm(const std::string &path);
+    void bootFirm();
 };

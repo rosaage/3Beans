@@ -32,6 +32,8 @@ public:
     void pressScreen(int x, int y);
     void releaseScreen();
     void setLStick(int x, int y);
+    void startNtrBoot();
+    bool isSleepClosed();
 
     void pressHome();
     void releaseHome();
@@ -43,7 +45,7 @@ public:
     uint32_t readSpiFifoData();
     uint32_t readSpiFifoIntMask() { return spiFifoIntMask; }
     uint32_t readSpiFifoIntStat() { return spiFifoIntStat; }
-    uint16_t readHidPad() { return hidPad; }
+    uint16_t readHidPad();
 
     void writeSpiFifoCnt(uint32_t mask, uint32_t value);
     void writeSpiFifoSelect(uint32_t mask, uint32_t value);
@@ -55,6 +57,7 @@ public:
 private:
     Core &core;
     uint8_t homeState = 0;
+    uint64_t ntrBootEnd = 0;
 
     uint16_t stickLX = 0x7FF;
     uint16_t stickLY = 0x7FF;

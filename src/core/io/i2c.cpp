@@ -59,7 +59,7 @@ uint8_t I2c::readMcu() {
         case 0x00: return 0x13; // Version high
         case 0x01: return 0x41; // Version low
         case 0x0B: return 0x64; // Battery percent
-        case 0x0F: return 0x02; // Power flags
+        case 0x0F: return core.input.isSleepClosed() ? 0x00 : 0x02; // Power flags (shell open)
         case 0x10: return readMcuIrqFlags(0);
         case 0x11: return readMcuIrqFlags(1);
         case 0x12: return readMcuIrqFlags(2);

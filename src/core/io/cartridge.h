@@ -95,6 +95,10 @@ private:
     uint32_t cartBlock[0x200] = {};
     std::queue<uint32_t> ctrFifo;
     bool ctrMode = false;
+    bool ntrCart = false;
+    uint8_t ntrMode = 0; // 0 = header, 1 = KEY1 commands, 2 = data
+    uint32_t ntrKey[0x412] = {};
+    uint64_t ntrSecureCmd = -1;
 
     ReplyCmd ntrReply = REPLY_NONE;
     ReplyCmd ctrReply = REPLY_NONE;
@@ -104,6 +108,7 @@ private:
     uint32_t spiCount = 0;
     uint32_t spiTotal = 0;
     uint32_t ctrAddress = 0;
+    uint32_t ntrAddress = 0;
     uint32_t spiAddress = 0;
     uint8_t spiCommand = 0;
     uint8_t spiStatus = 0;
@@ -123,5 +128,7 @@ private:
     uint32_t spiFifoIntStat = 0;
 
     uint32_t readCart(uint32_t address);
+    uint64_t decryptNtrCmd(uint64_t command);
+    void processNtrCmd(uint64_t command);
     uint8_t spiTransfer(uint8_t value);
 };

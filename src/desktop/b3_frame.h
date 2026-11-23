@@ -50,7 +50,7 @@ private:
     wxTimer *timer;
 
     std::thread *thread;
-    std::string cartPath;
+    std::string cartPath, firmPath;
     std::vector<int> axisBases;
     bool stickKeys[5] = {};
 
@@ -61,15 +61,17 @@ private:
     bool glSupport = true;
 
     void runCore();
-    void startCore(bool full);
+    void startCore(bool full, bool ntrBoot = false);
     void stopCore(bool full);
     void updateKeyStick();
 
     void insertCart(wxCommandEvent &event);
+    void bootFirm(wxCommandEvent &event);
     void ejectCart(wxCommandEvent &event);
     void quit(wxCommandEvent &event);
     void pause(wxCommandEvent &event);
     void restart(wxCommandEvent &event);
+    void startNtrBoot(wxCommandEvent &event);
     void stop(wxCommandEvent &event);
     void setHardware(wxCommandEvent &event);
     void fpsLimiter(wxCommandEvent &event);

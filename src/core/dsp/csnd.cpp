@@ -40,19 +40,23 @@ Csnd::~Csnd() {
 }
 
 uint32_t *Csnd::getSamples(uint32_t freq, uint32_t count) {
-    // Check if parameters changed and update the buffer details if so
-    dspSize = count * ((dspClock == CLK_33KHZ) ? 32728 : 47605) / freq;
-    if (mixFreq != freq || mixSize != count) {
-        mixFreq = freq, mixSize = count;
-        csndSize = count * 130914 / freq;
-        csndOfs = 0;
+    { // Keep buffer allocation and sizes consistent with the sample producer
+        std::lock_guard<std::mutex> guard(mutexes[2]);
+        // Check if parameters changed and update the buffer details if so
+        dspSize = count * ((dspClock == CLK_33KHZ) ? 32728 : 47605) / freq;
+        if (mixFreq != freq || mixSize != count) {
+            mixFreq = freq, mixSize = count;
+            csndSize = count * 130914 / freq;
+            csndOfs = 0;
 
-        // Initialize or resize the buffers themselves
-        delete[] mixBuffer;
-        mixBuffer = new uint32_t[mixSize];
-        for (int i = 0; i < 2; i++) {
-            delete[] csndBuffer[i];
-            csndBuffer[i] = new uint32_t[csndSize];
+            // Initialize or resize the buffers themselves
+            delete[] mixBuffer;
+            mixBuffer = new uint32_t[mixSize];
+            for (int i = 0; i < 2; i++) {
+                delete[] csndBuffer[i];
+                csndBuffer[i] = new uint32_t[csndSize]();
+            }
+            ready.store(false);
         }
     }
 
@@ -217,9 +221,13 @@ void Csnd::runSample() {
 
 void Csnd::sampleCsnd(int16_t left, int16_t right) {
     // Write samples to the buffer and check if full
+    std::unique_lock<std::mutex> bufferLock(mutexes[2]);
     if (!csndSize) return;
     csndBuffer[0][csndOfs++] = (right << 16) | (left & 0xFFFF);
     if (csndOfs != csndSize) return;
+
+    // Let the consumer read or resize buffers while waiting for playback
+    bufferLock.unlock();
 
     // Limit FPS to 60 if enabled by waiting for the previous buffer to play
     if (Settings::fpsLimiter) {
@@ -228,6 +236,8 @@ void Csnd::sampleCsnd(int16_t left, int16_t right) {
     }
 
     // Swap buffers and reset the pointer
+    bufferLock.lock();
+    if (!csndSize || csndOfs != csndSize) return; // Resized while waiting
     std::swap(csndBuffer[0], csndBuffer[1]);
     csndOfs = 0;
 

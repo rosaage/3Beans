@@ -42,6 +42,19 @@ void ArmInterp::init() {
     flushPipeline();
 }
 
+void ArmInterp::bootFirm(uint32_t entry) {
+    // FIRM launch state: supervisor mode, interrupts masked, caches/MMU disabled
+    core.cp15.writeReg(id, 1, 0, 0, core.cp15.readReg(id, 1, 0, 0) & ~0x1005);
+    setCpsr(0xD3 | ((entry & 1) << 5));
+    registersUsr[0] = registersUsr[1] = 0; // No launch arguments
+    registersUsr[2] = 0x0003BEEF; // Standard FIRM launch ABI
+    registersUsr[15] = entry & ~1U;
+    halted = 0;
+    cycles = core.globalCycles;
+    invalidatePc();
+    flushPipeline();
+}
+
 void ArmInterp::resetCycles() {
     // Adjust CPU cycles for a global cycle reset
     if (cycles != -1)
