@@ -235,6 +235,7 @@ template <typename T> T Memory::ioRead(CpuId id, uint32_t address) {
             DEF_IO32(0x10140424, data = readCfg11BrOverlayVal()) // CFG11_BR_OVERLAY_VAL
             DEF_IO16(0x10140FFC, data = core.interrupts.readCfg11Socinfo()) // CFG11_SOCINFO
             DEF_IO32(0x10141200, data = core.gpu.readCfg11GpuCnt()) // CFG11_GPU_CNT
+            DEF_IO16(0x10141210, data = readPdnFcramCnt()) // PDN_FCRAM_CNT
             DEF_IO32(0x10141300, data = core.interrupts.readCfg11MpClkcnt()) // CFG11_MP_CLKCNT
             DEF_IO32(0x10141304, data = readCfg11MpCnt()) // CFG11_MP_CNT
             DEF_IO08(0x10141310, data = core.interrupts.readCfg11MpBootcnt(0)) // CFG11_MP_BOOTCNT0

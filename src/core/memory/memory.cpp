@@ -241,6 +241,14 @@ void Memory::writeCfg11MpCnt(uint32_t mask, uint32_t value) {
     updateMap(false, 0x1F000000, 0x1F3FFFFF);
 }
 
+void Memory::writePdnFcramCnt(uint16_t mask, uint16_t value) {
+    // Bits 0/1 request reset release and clock enable; bit 2 acknowledges the clock.
+    // FCRAM accesses are immediate in this model, so acknowledge the request now.
+    mask &= 0x3;
+    pdnFcramCnt = (pdnFcramCnt & ~mask) | (value & mask);
+    pdnFcramCnt = (pdnFcramCnt & ~BIT(2)) | ((pdnFcramCnt & BIT(1)) << 1);
+}
+
 void Memory::writeCfg9Sysprot9(uint8_t value) {
     // Set bits in the CFG9_SYSPROT9 register and disable sensitive data
     cfg9Sysprot9 |= (value & 0x3);
