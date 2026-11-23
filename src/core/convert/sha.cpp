@@ -135,6 +135,19 @@ void Sha::pushFifo() {
     // Push data to the input FIFO and reset the current value
     inFifo.push(fifoValue);
     fifoValue = fifoMask = 0;
+
+    // Withdraw the request as soon as the FIFO crosses the DMA threshold.
+    // AES can request another transfer before the scheduled SHA update runs.
+    if (inFifo.size() > 8 || outFifo.size() > 8) {
+        if (arm9) {
+            core.ndma.clearDrq(0xA);
+            core.cdmas[XDMA].clearDrq(0x6);
+        }
+        else {
+            core.cdmas[CDMA0].clearDrq(0xB);
+            core.cdmas[CDMA1].clearDrq(0xB);
+        }
+    }
 }
 
 void Sha::triggerFifo() {
